@@ -113,3 +113,7 @@ For future code changes, run the relevant checks, commit the completed changes, 
 Install a browser once with `npx playwright install chromium`, then run `npm run test:browser`. To use an installed Chrome instead, run `WARETRACK_BROWSER_CHANNEL=chrome npm run test:browser`. The test runner starts a local development server when one is not already running.
 
 The suite checks instanced object selection, live panels, shader/browser errors, GPU resource cleanup, idle rendering, camera flights, wheel/pan bounds, combined filters, mobile resizing, reduced motion, and renderer budgets. Frame timing attachments include the GPU and viewport; they report observed FPS rather than asserting a universal hardware-dependent frame rate. See `docs/code-review.md` for the latest engineering review and measured results.
+
+## Learn from the prompts
+
+The [prompts folder](prompts/README.md) records the six original prompts used to build this project, from the concept image and data model through the 3D scene, live status, KPIs, and engineering review. Each prompt is preserved verbatim in a numbered file, with a short guide to using the sequence.
