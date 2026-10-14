@@ -1,16 +1,20 @@
 import { useStore } from 'zustand';
+import { useMemo } from 'react';
+import { useShallow } from 'zustand/react/shallow';
 import { getObjectDetails, warehouseStore } from '../../store/warehouseStore';
 
+const updatedTime = new Intl.DateTimeFormat('en-MY', { dateStyle: 'medium', timeStyle: 'medium', timeZone: 'Asia/Kuala_Lumpur' });
 const label = (state: string) => state.replaceAll('_', ' ');
 export function StatusPanel() {
-  const selected = useStore(warehouseStore, s => s.selected);
-  const live = useStore(warehouseStore, s => selected ? s.live[`${selected.kind}:${selected.id}`] : null);
-  const data = useStore(warehouseStore, s => s.data);
-  const details = getObjectDetails({ ...warehouseStore.getState(), selected, data }, selected);
+  const { selected, live, data } = useStore(warehouseStore, useShallow(s => ({
+    selected: s.selected, data: s.data,
+    live: s.selected ? s.live[`${s.selected.kind}:${s.selected.id}`] : null,
+  })));
+  const details = useMemo(() => getObjectDetails({ data,
+    live: selected && live ? { [`${selected.kind}:${selected.id}`]: live } : {},
+  }, selected), [data, selected, live]);
   if (!details || !live) return null;
-  const updated = new Intl.DateTimeFormat('en-MY', {
-    dateStyle: 'medium', timeStyle: 'medium', timeZone: 'Asia/Kuala_Lumpur',
-  }).format(new Date(live.updatedAt));
+  const updated = updatedTime.format(new Date(live.updatedAt));
   return <aside className="status-panel" aria-label="Selected object live status">
     <div className="panel-heading"><span>{details.ref.kind.toUpperCase()}</span>
       <button aria-label="Close status panel" onClick={() => warehouseStore.getState().select(null)}>×</button></div>

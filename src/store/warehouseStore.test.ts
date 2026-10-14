@@ -4,7 +4,7 @@ import { seedData } from '../data';
 import { createWarehouseStore, getObjectDetails, rackId } from './warehouseStore';
 import { startSimulation } from './simulation';
 
-test('telemetry changes all vehicles, preserves assignments and the source snapshot', () => {
+test('telemetry updates vehicles while preserving maintenance, assignments and the source snapshot', () => {
   const before = JSON.stringify(seedData);
   const store = createWarehouseStore();
   const data = store.getState().data;
@@ -18,7 +18,8 @@ test('telemetry changes all vehicles, preserves assignments and the source snaps
   assert.equal(after.selected, ref);
   for (const kind of ['truck', 'forklift'] as const) {
     for (const entity of kind === 'truck' ? data.trucks : data.forklifts) {
-      assert.notEqual(after.live[`${kind}:${entity.id}`].state, live[`${kind}:${entity.id}`].state);
+      if (entity.status === 'maintenance') assert.equal(after.live[`${kind}:${entity.id}`].state, 'maintenance');
+      else assert.notEqual(after.live[`${kind}:${entity.id}`].state, live[`${kind}:${entity.id}`].state);
       assert.equal(after.live[`${kind}:${entity.id}`].updatedAt, '2026-10-14T06:00:02.000Z');
     }
   }
@@ -64,4 +65,39 @@ test('simulation schedules exactly two seconds and returns its cleanup function'
   callback();
   assert.equal(store.getState().tick, 1);
   stop(); assert(cleaned);
+});
+
+test('simulation never activates idle trucks or equipment in maintenance', () => {
+  const data = structuredClone(seedData);
+  data.trucks[0].status = 'maintenance';
+  data.trucks[1].status = 'idle';
+  const store = createWarehouseStore(data);
+  for (let i = 0; i < 6; i++) {
+    store.getState().advance('2026-10-14T06:00:02.000Z');
+    assert.equal(store.getState().live['truck:truck-101'].state, 'maintenance');
+    assert.equal(store.getState().live['truck:truck-102'].state, 'idle');
+    assert.equal(store.getState().live['forklift:forklift-8'].state, 'maintenance');
+  }
+});
+
+test('telemetry atomically clears an object that no longer matches a status filter', () => {
+  const store = createWarehouseStore();
+  store.getState().setFilters({ truckStatus: 'loading' });
+  store.getState().select({ kind: 'truck', id: 'truck-101' });
+  assert(store.getState().selected);
+  const snapshots: Array<{ state: string; selected: unknown }> = [];
+  const unsubscribe = store.subscribe(s => snapshots.push({ state: s.live['truck:truck-101'].state, selected: s.selected }));
+  store.getState().advance('2026-10-14T06:00:02.000Z');
+  unsubscribe();
+  assert.deepEqual(snapshots, [{ state: 'waiting', selected: null }]);
+});
+
+test('stale registry entries and completed assignments never crash or appear as current shipments', () => {
+  const store = createWarehouseStore(structuredClone(seedData));
+  const state = store.getState();
+  const ref = { kind: 'truck' as const, id: 'truck-101' };
+  state.data.trucks[0].activeShipmentId = state.data.shipments.find(s => s.status === 'completed')!.id;
+  assert.equal(getObjectDetails(state, ref)!.shipments.length, 0);
+  state.data.trucks = state.data.trucks.filter(t => t.id !== ref.id);
+  assert.equal(getObjectDetails(state, ref), null);
 });

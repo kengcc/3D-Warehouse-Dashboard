@@ -1,29 +1,30 @@
-import { useEffect, useMemo, useRef } from 'react';
+import { memo, useLayoutEffect, useMemo, useRef } from 'react';
 import { Canvas, useFrame, useThree } from '@react-three/fiber';
 import { Grid } from '@react-three/drei';
-import { CanvasTexture, DirectionalLight, Object3D, PCFSoftShadowMap } from 'three';
+import { DirectionalLight, Object3D, PCFSoftShadowMap } from 'three';
 import type { MapControls } from 'three-stdlib';
 import { StrategyCamera } from './StrategyCamera';
-import { Box, DockModel, ForkliftModel, ShelfModel, TruckModel } from './objects';
-import { dockX, DOCK_Z, MAP_HALF_SIZE } from './layout';
+import { MAP_HALF_SIZE } from './layout';
 import type { getSiteLayout } from './layout';
-import { ObjectOutline, Selectable } from './Selectable';
+import { GeometryResources, InstancedWarehouseParts } from './InstancedParts';
+import { selectedParts, warehouseGeometry } from './geometry';
 
 export interface SceneSelection {
   selectedKey: string | null; siteKey: string; rackKeys: Record<string, string>; onSelect: (key: string) => void;
 }
-type SiteLayout = ReturnType<typeof getSiteLayout>;
-export interface WarehousePresentation { position: [number, number, number]; layout: SiteLayout; selection: SceneSelection }
+export interface WarehousePresentation { position: [number, number, number]; layout: ReturnType<typeof getSiteLayout>; selection: SceneSelection }
 
 function CampusLight() {
   const light = useRef<DirectionalLight>(null);
   const target = useMemo(() => new Object3D(), []);
   const controls = useThree(s => s.controls) as MapControls | null;
+  const gl = useThree(s => s.gl);
   useFrame(() => {
-    if (!light.current || !controls) return;
+    if (!light.current || !controls || target.position.equals(controls.target)) return;
     target.position.copy(controls.target);
     light.current.position.set(target.position.x - 25, 55, target.position.z + 20);
     target.updateMatrixWorld();
+    gl.shadowMap.needsUpdate = true;
   });
   return <>
     <primitive object={target} />
@@ -34,78 +35,51 @@ function CampusLight() {
   </>;
 }
 
-function DockNumber({ number, x }: { number: number; x: number }) {
-  const texture = useMemo(() => {
-    const canvas = document.createElement('canvas');
-    canvas.width = 128; canvas.height = 64;
-    const context = canvas.getContext('2d')!;
-    context.fillStyle = '#18262d'; context.fillRect(0, 0, 128, 64);
-    context.fillStyle = '#e2e6df'; context.font = '600 46px system-ui';
-    context.textAlign = 'center'; context.textBaseline = 'middle';
-    context.fillText(String(number).padStart(2, '0'), 64, 34);
-    return new CanvasTexture(canvas);
-  }, [number]);
-  useEffect(() => () => texture.dispose(), [texture]);
-  return <mesh position={[x, 4.85, DOCK_Z + 0.6]}>
-    <planeGeometry args={[1.1, 0.55]} /><meshBasicMaterial map={texture} />
-    <ObjectOutline />
+const Warehouse = memo(function Warehouse({ layout, selection }: Omit<WarehousePresentation, 'position'>) {
+  const { selectedKey, siteKey, rackKeys, onSelect } = selection;
+  const geometry = useMemo(() => warehouseGeometry(layout, siteKey, rackKeys), [layout, siteKey, rackKeys]);
+  const selected = useMemo(() => selectedParts(geometry.parts, selectedKey, siteKey), [geometry, selectedKey, siteKey]);
+  return <>
+    <InstancedWarehouseParts geometry={geometry} selected={selected} onSelect={onSelect} />
+    <Grid position={[0, 0.015, 0]} args={[144, 144]} cellSize={2} cellThickness={0.5}
+      cellColor="#47545a" sectionSize={10} sectionThickness={0.8} sectionColor="#637078"
+      fadeDistance={180} fadeStrength={1} infiniteGrid={false} />
+  </>;
+});
+
+function Apron({ warehouses, cameraTarget }: { warehouses: WarehousePresentation[]; cameraTarget: [number, number, number] }) {
+  const { gl, invalidate } = useThree();
+  useLayoutEffect(() => {
+    gl.shadowMap.autoUpdate = false;
+    gl.shadowMap.needsUpdate = true; invalidate();
+  }, [gl, invalidate]);
+  return <mesh position={[(warehouses.length - 1) * 90, -0.55, 0]} receiveShadow
+    onClick={event => {
+      event.stopPropagation();
+      const focused = warehouses.find(w => w.position[0] === cameraTarget[0]);
+      if (event.delta <= 5 && focused) focused.selection.onSelect(focused.selection.siteKey);
+    }}>
+    <boxGeometry args={[(warehouses.length - 1) * 180 + MAP_HALF_SIZE * 2, 0.5, 144]} />
+    <meshStandardMaterial color="#303e44" roughness={0.78} metalness={0.12} />
   </mesh>;
 }
 
-function Warehouse({ layout, selection }: { layout: SiteLayout; selection: SceneSelection }) {
-  const { selectedKey, siteKey, rackKeys, onSelect } = selection;
-  return <Selectable id={siteKey} selected={selectedKey === siteKey} onSelect={() => onSelect(siteKey)}>
-    <Box position={[0, -0.25, 0]} size={[MAP_HALF_SIZE * 2, 0.5, MAP_HALF_SIZE * 2]} color="#303e44" />
-    <Grid position={[0, 0.015, 0]} args={[MAP_HALF_SIZE * 2, MAP_HALF_SIZE * 2]} cellSize={2} cellThickness={0.5}
-      cellColor="#47545a" sectionSize={10} sectionThickness={0.8} sectionColor="#637078"
-      fadeDistance={180} fadeStrength={1} infiniteGrid={false} />
-    <Box position={[0, 0.04, -12]} size={[49, 0.08, 42]} color="#677577" />
-    <Box position={[0, 3.2, -33]} size={[50, 6.4, 0.5]} color="#3c4b52" />
-    <Box position={[-25, 1.1, -12]} size={[0.5, 2.2, 42]} color="#43525a" />
-    <Box position={[25, 1.1, -12]} size={[0.5, 2.2, 42]} color="#43525a" />
-    <Box position={[0, 0.12, 8]} size={[50, 0.24, 0.5]} color="#a0a59a" />
-    {layout.docks.map(dock => <Selectable key={dock.id} id={`dock:${dock.id}`} selected={selectedKey === `dock:${dock.id}`} onSelect={() => onSelect(`dock:${dock.id}`)}>
-      <DockModel dock={dock} />
-      <DockNumber number={dock.number} x={dockX(dock.number)} />
-      {[-2.8, 2.8].map(offset => <Box key={offset} position={[dockX(dock.number) + offset, 0.035, 19]} size={[0.06, 0.02, 19]} color="#b29152" />)}
-      <Box position={[dockX(dock.number), 0.035, 28.5]} size={[5.6, 0.02, 0.06]} color="#b29152" />
-    </Selectable>)}
-    {layout.racks.map(rack => {
-      const key = rackKeys[`${rack.aisle}-${rack.rack}`];
-      return <Selectable key={key} id={key} selected={selectedKey === key} onSelect={() => onSelect(key)}>
-        <ShelfModel {...rack} selectedKey={selectedKey} onSelect={onSelect} />
-      </Selectable>;
-    })}
-    {layout.trucks.map(entry => <Selectable key={entry.truck.id} id={`truck:${entry.truck.id}`} selected={selectedKey === `truck:${entry.truck.id}`} onSelect={() => onSelect(`truck:${entry.truck.id}`)}>
-      <TruckModel {...entry} />
-    </Selectable>)}
-    {layout.forklifts.map(entry => <Selectable key={entry.forklift.id} id={`forklift:${entry.forklift.id}`} selected={selectedKey === `forklift:${entry.forklift.id}`} onSelect={() => onSelect(`forklift:${entry.forklift.id}`)}>
-      <ForkliftModel {...entry} />
-    </Selectable>)}
-    {Array.from({ length: 13 }, (_, i) => <Box key={i} position={[-30 + i * 5, 0.035, 35]} size={[2.5, 0.025, 0.13]} color="#afb5a8" />)}
-    {[-1, 1].map(side => <Box key={side} position={[0, 0.04, side * (MAP_HALF_SIZE - 0.5)]} size={[MAP_HALF_SIZE * 2 - 1, 0.08, 0.15]} color="#b98b40" />)}
-    {[-1, 1].map(side => <Box key={side} position={[side * (MAP_HALF_SIZE - 0.5), 0.04, 0]} size={[0.15, 0.08, MAP_HALF_SIZE * 2 - 1]} color="#b98b40" />)}
-  </Selectable>;
-}
-
-/** Pure presentation: layout and selection actions are provided by the application. */
-export function WarehouseScene({ warehouses, cameraTarget }: {
+/** Pure presentation: batches, pointer picking and camera control only. */
+export const WarehouseScene = memo(function WarehouseScene({ warehouses, cameraTarget }: {
   warehouses: WarehousePresentation[]; cameraTarget: [number, number, number];
 }) {
-  const focusedWarehouse = warehouses.find(w => w.position[0] === cameraTarget[0]);
-  return <Canvas orthographic shadows={{ type: PCFSoftShadowMap }} dpr={[1, 1.75]}
-    camera={{ position: [52, 52, 52], zoom: 13, near: 0.1, far: 350 }}
-    gl={{ antialias: true }} fallback={<div className="fallback">WebGL is required to explore the warehouse.</div>}>
+  return <Canvas orthographic frameloop="demand" shadows={{ type: PCFSoftShadowMap }} dpr={[1, 1.5]}
+    camera={{ position: [52, 52, 52], zoom: 13, near: 0.1, far: 350 }} gl={{ antialias: true }}
+    fallback={<div className="fallback">WebGL is required to explore the warehouse.</div>}>
     <color attach="background" args={['#172229']} />
     <hemisphereLight args={['#dce9ee', '#50524a', 2.1]} />
     <CampusLight />
-    <Selectable id="campus-apron" selected={false} onSelect={() => focusedWarehouse?.selection.onSelect(focusedWarehouse.selection.siteKey)}>
-      <Box position={[(warehouses.length - 1) * 90, -0.55, 0]} size={[(warehouses.length - 1) * 180 + MAP_HALF_SIZE * 2, 0.5, MAP_HALF_SIZE * 2]} color="#303e44" />
-    </Selectable>
-    {warehouses.map(warehouse => <group key={warehouse.selection.siteKey} position={warehouse.position}>
-      <Warehouse layout={warehouse.layout} selection={warehouse.selection} />
-    </group>)}
+    <Apron warehouses={warehouses} cameraTarget={cameraTarget} />
+    <GeometryResources>
+      {warehouses.map(w => <group key={w.selection.siteKey} position={w.position}>
+        <Warehouse layout={w.layout} selection={w.selection} />
+      </group>)}
+    </GeometryResources>
     <StrategyCamera focus={cameraTarget} />
-
   </Canvas>;
-}
+});

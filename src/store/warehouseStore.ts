@@ -1,6 +1,7 @@
 import { createStore } from 'zustand/vanilla';
 import { seedData, SEED_TIMESTAMP } from '../data';
 import type { Shipment, WarehouseData } from '../data';
+import { getValidSelection } from './selectors';
 
 export type ObjectKind = 'site' | 'dock' | 'truck' | 'forklift' | 'rack' | 'inventory';
 export interface ObjectRef { kind: ObjectKind; id: string }
@@ -48,13 +49,17 @@ export function createWarehouseStore(data: WarehouseData = seedData) {
       if (get().data.sites.some(s => s.id === activeSiteId)) set({ activeSiteId, selected: null });
     },
     setFilters: filters => set(state => ({ filters: { ...state.filters, ...filters }, selected: null })),
-    select: ref => { if (!ref || get().live[objectKey(ref)]) set({ selected: ref }); },
+    select: ref => {
+      const state = get();
+      if (!ref || state.live[objectKey(ref)]) set({ selected: getValidSelection({ ...state, selected: ref }) });
+    },
     advance: updatedAt => set(state => {
       const next = { ...state.live };
       // Telemetry phases are separate from shipment lifecycle and physical placement.
       // Existing assignments remain valid while a vehicle waits or is inspected.
       for (const truck of state.data.trucks) {
-        const phases = truck.currentSiteId ? ['waiting', 'inspection', 'loading']
+        const phases = truck.status === 'maintenance' || truck.status === 'idle' ? [truck.status]
+          : truck.currentSiteId ? ['waiting', 'inspection', 'loading']
           : truck.status === 'in_transit' ? ['traffic_delay', 'in_transit']
           : ['driver_check', 'scheduled'];
         next[objectKey({ kind: 'truck', id: truck.id })] = {
@@ -62,7 +67,7 @@ export function createWarehouseStore(data: WarehouseData = seedData) {
         };
       }
       for (const forklift of state.data.forklifts) {
-        const phases = forklift.status === 'maintenance' ? ['inspection', 'maintenance']
+        const phases = forklift.status === 'maintenance' ? ['maintenance']
           : forklift.status === 'charging' ? ['battery_check', 'charging']
           : forklift.activeShipmentId ? ['waiting', 'working', 'positioning']
           : ['repositioning', 'idle'];
@@ -70,8 +75,9 @@ export function createWarehouseStore(data: WarehouseData = seedData) {
           state: phases[state.tick % phases.length], updatedAt,
         };
       }
-      return { live: next, tick: state.tick + 1,
+      const update = { live: next, tick: state.tick + 1,
         operationalTime: new Date(Date.parse(state.operationalTime) + 2000).toISOString() };
+      return { ...update, selected: getValidSelection({ ...state, ...update }) };
     }),
   }));
 }
@@ -79,7 +85,7 @@ export function createWarehouseStore(data: WarehouseData = seedData) {
 export const warehouseStore = createWarehouseStore();
 
 /** Resolve status and relationships in the application layer, never in 3D components. */
-export function getObjectDetails(state: WarehouseStore, ref: ObjectRef | null): ObjectDetails | null {
+export function getObjectDetails(state: Pick<WarehouseStore, 'data' | 'live'>, ref: ObjectRef | null): ObjectDetails | null {
   if (!ref) return null;
   const status = state.live[objectKey(ref)];
   if (!status) return null;
@@ -88,21 +94,21 @@ export function getObjectDetails(state: WarehouseStore, ref: ObjectRef | null): 
   const active = data.shipments.filter(s => s.status !== 'completed');
   switch (ref.kind) {
     case 'site': {
-      const site = data.sites.find(s => s.id === ref.id)!;
+      const site = data.sites.find(s => s.id === ref.id); if (!site) return null;
       name = site.name; siteId = site.id; ids = active.filter(s => s.siteId === siteId).map(s => s.id); break;
     }
     case 'dock': {
-      const dock = data.docks.find(d => d.id === ref.id)!;
+      const dock = data.docks.find(d => d.id === ref.id); if (!dock) return null;
       name = `Dock ${String(dock.number).padStart(2, '0')}`; siteId = dock.siteId;
       ids = dock.activeShipmentId ? [dock.activeShipmentId] : []; break;
     }
     case 'truck': {
-      const truck = data.trucks.find(t => t.id === ref.id)!;
+      const truck = data.trucks.find(t => t.id === ref.id); if (!truck) return null;
       name = `${truck.id.toUpperCase()} · ${truck.registration}`; siteId = truck.currentSiteId;
       ids = truck.activeShipmentId ? [truck.activeShipmentId] : []; break;
     }
     case 'forklift': {
-      const forklift = data.forklifts.find(f => f.id === ref.id)!;
+      const forklift = data.forklifts.find(f => f.id === ref.id); if (!forklift) return null;
       name = forklift.code; siteId = forklift.siteId;
       ids = forklift.activeShipmentId ? [forklift.activeShipmentId] : []; break;
     }
@@ -116,5 +122,5 @@ export function getObjectDetails(state: WarehouseStore, ref: ObjectRef | null): 
       ids = active.filter(s => s.lines.some(l => items.some(i => i.id === l.inventoryItemId))).map(s => s.id); break;
     }
   }
-  return { ref, name, siteId, ...status, shipments: data.shipments.filter(s => ids.includes(s.id)) };
+  return { ref, name, siteId, ...status, shipments: active.filter(s => ids.includes(s.id)) };
 }

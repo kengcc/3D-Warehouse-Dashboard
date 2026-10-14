@@ -33,7 +33,9 @@ Open the local address printed by Vite, normally `http://127.0.0.1:5173/`.
 | Command | Purpose |
 | --- | --- |
 | `npm run dev` | Start the development server |
-| `npm test` | Run placement, camera, store, KPI, and filter tests |
+| `npm test` | Run placement, instancing, camera, store, KPI, and filter tests |
+| `npm run typecheck` | Run strict TypeScript checks, including unused declarations |
+| `npm run test:browser` | Run browser interaction, resource, and renderer-budget regressions |
 | `npm run build` | Type-check the project and build production files in `dist/` |
 | `npm run preview` | Preview the production build locally |
 
@@ -89,7 +91,7 @@ src/
   style.css             Dark industrial theme and responsive layout
 ```
 
-Business decisions, KPI calculations, shipment resolution, and simulated state transitions belong in the store and application layer. Scene components receive derived layouts and selection callbacks and handle rendering, pointer gestures, and camera movement.
+Repeated warehouse parts are batched into instanced meshes with shared geometry, materials, and a dock-label atlas. Instance IDs preserve object picking; selected outlines are batched separately. Rendering runs on demand, and static shadow maps update only when the camera or geometry changes. Business decisions, KPI calculations, shipment resolution, and simulated state transitions belong in the store and application layer. Scene components receive derived layouts and selection callbacks and handle rendering, pointer gestures, and camera movement.
 
 ## Simulation and scope
 
@@ -104,3 +106,10 @@ This prototype has no external warehouse backend, authentication, or persistent 
 Automated tests cover data-derived placement, camera ground-plane bounds, immutable seed data, telemetry updates and cleanup, object details, KPI scope, ETA boundaries, and combined filters. The current interface has also been checked in a browser for selection, persistent canvas/camera state, smooth and rapid site changes, filter results, mobile fit, and reduced-motion navigation.
 
 For future code changes, run the relevant checks, commit the completed changes, and push to this repository. Project-specific instructions are recorded in `AGENTS.md`.
+
+
+### Browser checks
+
+Install a browser once with `npx playwright install chromium`, then run `npm run test:browser`. To use an installed Chrome instead, run `WARETRACK_BROWSER_CHANNEL=chrome npm run test:browser`. The test runner starts a local development server when one is not already running.
+
+The suite checks instanced object selection, live panels, shader/browser errors, GPU resource cleanup, idle rendering, camera flights, wheel/pan bounds, combined filters, mobile resizing, reduced motion, and renderer budgets. Frame timing attachments include the GPU and viewport; they report observed FPS rather than asserting a universal hardware-dependent frame rate. See `docs/code-review.md` for the latest engineering review and measured results.

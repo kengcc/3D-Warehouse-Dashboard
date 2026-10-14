@@ -12,7 +12,7 @@ export function isShipmentDelayed(shipment: Shipment, asOf: string) {
   return Date.parse(asOf) > Date.parse(deadline);
 }
 
-export function getSiteKpis(state: WarehouseStore, siteId = state.activeSiteId) {
+export function getSiteKpis(state: Pick<WarehouseStore, 'data' | 'live' | 'activeSiteId'>, siteId = state.activeSiteId) {
   const shipments = state.data.shipments.filter(s => s.siteId === siteId);
   const completed = shipments.filter(s => s.status === 'completed' && s.completedAt !== null);
   const onTime = completed.filter(s => Date.parse(s.completedAt!) <= Date.parse(s.etaDeparture)).length;
@@ -31,8 +31,22 @@ export function getSiteKpis(state: WarehouseStore, siteId = state.activeSiteId) 
 }
 
 /** Filters combine with AND; site KPIs deliberately remain unfiltered. */
-export function getFilteredShipments(state: WarehouseStore, siteId = state.activeSiteId) {
+export function getFilteredShipments(state: Pick<WarehouseStore, 'data' | 'live' | 'filters' | 'activeSiteId' | 'operationalTime'>, siteId = state.activeSiteId) {
   return state.data.shipments.filter(s => s.siteId === siteId && s.status !== 'completed'
     && (!state.filters.delayedOnly || isShipmentDelayed(s, state.operationalTime))
     && (state.filters.truckStatus === 'all' || state.live[`truck:${s.truckId}`]?.state === state.filters.truckStatus));
+}
+
+
+/** Keep filtered selection consistent in the same atomic update as telemetry. */
+export function getValidSelection(state: WarehouseStore) {
+  const selected = state.selected;
+  if (!selected || !(state.filters.delayedOnly || state.filters.truckStatus !== 'all')) return selected;
+  const shipments = getFilteredShipments(state);
+  if (selected.kind === 'truck') return shipments.some(s => s.truckId === selected.id) ? selected : null;
+  if (selected.kind === 'forklift') {
+    const forklift = state.data.forklifts.find(f => f.id === selected.id);
+    return shipments.some(s => s.id === forklift?.activeShipmentId) ? selected : null;
+  }
+  return selected;
 }

@@ -1,15 +1,19 @@
 import { useStore } from 'zustand';
+import { useShallow } from 'zustand/react/shallow';
 import { warehouseStore } from '../../store/warehouseStore';
 import { getSiteKpis, TRUCK_STATUSES } from '../../store/selectors';
 
 export function OperationsBar() {
-  const state = useStore(warehouseStore);
-  const kpis = getSiteKpis(state);
+  const state = useStore(warehouseStore, useShallow(s => ({
+    sites: s.data.sites, activeSiteId: s.activeSiteId, filters: s.filters,
+    setSite: s.setSite, setFilters: s.setFilters, ...getSiteKpis(s),
+  })));
+  const kpis = state;
   return <>
     <header className="topbar">
       <div className="brand"><span className="brand-icon" aria-hidden="true">▦</span> WARETRACK <span className="mode">LIVE OPERATIONS</span></div>
       <label className="site-picker">SITE <select aria-label="Warehouse site" value={state.activeSiteId} onChange={e => state.setSite(e.target.value)}>
-        {state.data.sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
+        {state.sites.map(site => <option key={site.id} value={site.id}>{site.name}</option>)}
       </select></label>
     </header>
     <section className="operations-bar" aria-label="Site operations">

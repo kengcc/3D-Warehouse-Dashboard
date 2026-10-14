@@ -1,50 +1,55 @@
-import { useLayoutEffect, useRef } from 'react';
+import { useLayoutEffect, useMemo, useRef } from 'react';
 import { useFrame, useThree } from '@react-three/fiber';
 import { MapControls } from '@react-three/drei';
 import { MOUSE, TOUCH, OrthographicCamera, Vector3 } from 'three';
 import type { MapControls as MapControlsImpl } from 'three-stdlib';
 import { cameraLimits } from './layout';
 
-interface Flight { elapsed: number; from: Vector3; to: Vector3; fromZoom: number; toZoom: number }
+interface Flight { startedAt: number; from: Vector3; to: Vector3; fromZoom: number; toZoom: number }
 export function StrategyCamera({ focus }: { focus: [number, number, number] }) {
   const controls = useRef<MapControlsImpl>(null);
   const flight = useRef<Flight | null>(null);
   const initialized = useRef(false);
   const boundCenter = useRef(new Vector3(...focus));
-  const { camera, size } = useThree();
+  const camera = useThree(s => s.camera);
+  const get = useThree(s => s.get);
+  const invalidate = useThree(s => s.invalidate);
+  const offset = useMemo(() => new Vector3(52, 52, 52), []);
   const [x, y, z] = focus;
   useLayoutEffect(() => {
     const c = controls.current;
     if (!c || !(camera instanceof OrthographicCamera)) return;
     const destination = new Vector3(x, y, z);
+    const { size } = get();
     const zoom = Math.max(13, cameraLimits(size.width, size.height, 13).minimumZoom);
     if (!initialized.current) {
       initialized.current = true;
       c.target.copy(destination); boundCenter.current.copy(destination);
-      camera.position.copy(destination).add(new Vector3(52, 52, 52));
-      camera.zoom = zoom; camera.updateProjectionMatrix(); c.update(); return;
+      camera.position.copy(destination).add(offset);
+      camera.zoom = zoom; camera.updateProjectionMatrix(); c.update(); invalidate(); return;
     }
+    if (boundCenter.current.equals(destination) && !flight.current) return;
     const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    flight.current = { elapsed: reduced ? 1.1 : 0, from: c.target.clone(), to: destination, fromZoom: camera.zoom, toZoom: zoom };
-    c.enabled = false;
+    flight.current = { startedAt: performance.now() / 1000 - (reduced ? 1.1 : 0), from: c.target.clone(), to: destination, fromZoom: camera.zoom, toZoom: zoom };
+    c.enabled = false; invalidate();
   // Viewport changes are handled by bounds; focus changes alone launch a flight.
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [camera, x, y, z]);
+  }, [camera, x, y, z, get, invalidate, offset]);
 
-  useFrame((_, delta) => {
+  useFrame(() => {
+    const { size } = get();
     const c = controls.current;
     if (!c || !(camera instanceof OrthographicCamera)) return;
     if (flight.current) {
       const f = flight.current;
-      f.elapsed += delta;
-      const t = Math.min(1, f.elapsed / 1.1);
+      const t = Math.min(1, (performance.now() / 1000 - f.startedAt) / 1.1);
       const eased = t * t * (3 - 2 * t);
       c.target.lerpVectors(f.from, f.to, eased);
       boundCenter.current.copy(c.target);
-      camera.position.copy(c.target).add(new Vector3(52, 52, 52));
+      camera.position.copy(c.target).add(offset);
       camera.zoom = f.fromZoom + (f.toZoom - f.fromZoom) * eased;
       camera.updateProjectionMatrix();
       if (t === 1) { flight.current = null; boundCenter.current.copy(f.to); c.enabled = true; }
+      else invalidate();
     }
     const bounds = cameraLimits(size.width, size.height, camera.zoom);
     c.minZoom = Math.max(7, bounds.minimumZoom);
