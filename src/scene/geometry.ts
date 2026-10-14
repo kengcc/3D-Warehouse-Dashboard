@@ -130,4 +130,3 @@ export function partMatrices(parts: Part[]) {
   });
   return buffer;
 }
-
